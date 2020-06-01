@@ -7,6 +7,8 @@ use rand::seq::SliceRandom;
 use std::collections::{HashSet, BTreeSet, VecDeque};
 use std::path::Path;
 
+mod fractal;
+
 struct Canvas {
     max_x: u32,
     max_y: u32,
@@ -54,6 +56,10 @@ impl Canvas {
 }
 
 fn main() {
+
+    fractal::test();
+    return;
+
     let imgx = 1 << 8;
     let imgy = 1 << 8;
 
