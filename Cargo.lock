@@ -140,6 +140,7 @@ name = "graphics"
 version = "0.1.0"
 dependencies = [
  "image",
+ "num-traits",
  "rand",
 ]
 
