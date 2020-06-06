@@ -12,3 +12,8 @@ rand = "0.7.3"
 num-traits = "0.2.11"
 num-complex = "0.2"
 rayon = "1.3"
+
+# pacman -S sdl2 sdl2_image
+sdl2 = {version = "0.34", features = ["image"]}
+
+multiset = "0.0.5"

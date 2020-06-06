@@ -8,6 +8,7 @@ use std::collections::{HashSet, BTreeSet, VecDeque};
 use std::path::Path;
 
 mod fractal;
+mod sdl;
 
 struct Canvas {
     max_x: u32,
@@ -57,7 +58,8 @@ impl Canvas {
 
 fn main() {
 
-    fractal::test();
+    // fractal::test();
+    sdl::test_sdl();
     return;
 
     let imgx = 1 << 8;
@@ -159,14 +161,14 @@ fn main() {
     // img.save("outputs/coucou.jpg").unwrap()
 }
 
-// fn dist<T: PrimInt + std::fmt::Display>(a: &[T;3], b: &[T;3]) -> T {
-fn dist(a: &[u8;3], b: &[u8;3]) -> u32 {
+fn dist<T: PrimInt + std::fmt::Display>(a: &[T;3], b: &[T;3]) -> T {
+// fn dist(a: &[u8;3], b: &[u8;3]) -> u32 {
     let (ax, ay, az) = (a[0], a[1], a[2]);
     let (bx, by, bz) = (b[0], b[1], b[2]);
-    let dx = (bx - ax) as u32;
+    let dx = bx - ax;
     // println!("dx: {}", dx);
-    let dy = (by - ay) as u32;
-    let dz = (bz - az) as u32;
+    let dy = by - ay;
+    let dz = bz - az;
     (dx * dx) + (dy * dy) + (dz * dz)
 }
 
