@@ -22,10 +22,10 @@ enum Side {
 impl Into<usize> for Side {
     fn into(self) -> usize {
         match self {
-            Up => 1,
-            Right => 2,
-            Down => 3,
-            Left => 4,
+            Side::Up => 1,
+            Side::Right => 2,
+            Side::Down => 3,
+            Side::Left => 4,
         }
     }
 }
@@ -76,14 +76,14 @@ impl<'texture> Hash for Tile<'texture> {
 
 type Link<'a> = (&'a Tile<'a>, Side, &'a Tile<'a>);
 
-#[derive(Debug)]
-enum Cell<'a> {
-    Fixed(Tile<'a>),
-    Pending(&'a Vec<Tile<'a>>),
-    Impossible,
-}
+// #[derive(Debug)]
+// enum Cell<'a> {
+//     Fixed(Tile<'a>),
+//     Pending(&'a Vec<Tile<'a>>),
+//     Impossible,
+// }
 
-type TileSupport = Vec<Vec<Vec<usize>>>;
+type TileSupport = Vec<Vec<bool>>;
 
 struct Grid<'a> {
     grid_x: usize,
@@ -93,28 +93,14 @@ struct Grid<'a> {
 }
 
 impl<'a> Grid<'a> {
-    fn new(x: usize, y: usize, tiles: &'a Vec<Tile<'a>>, links: &'a Vec<Link<'a>>) -> Self {
+    fn new(x: usize, y: usize, tiles: &'a Vec<Tile<'a>>) -> Self {
         let grid = (0..(x * y)).into_iter().map(|_| None).collect();
 
         let support = (0..(x * y))
             .into_iter()
             .map(|_| {
-                vec![Side::Up, Side::Right, Side::Down, Side::Left]
-                    .into_iter()
-                    .map(|side| {
-                        tiles
-                            .iter()
-                            .map(|orig_tile| {
-                                links
-                                    .iter()
-                                    .filter(|(link_orig, link_side, _)| {
-                                        &orig_tile == link_orig && &side == link_side
-                                    })
-                                    .count()
-                            })
-                            .collect()
-                    })
-                    .collect()
+                // all tiles possible at the beginning
+                vec![true; tiles.len()]
             })
             .collect();
 
@@ -130,19 +116,21 @@ impl<'a> Grid<'a> {
         &self.grid[self.grid_x * y + x]
     }
 
-    fn get_support(&self, (x, y): (usize, usize)) -> &Vec<Vec<usize>> {
+    fn get_support(&self, (x, y): (usize, usize)) -> &Vec<bool> {
         &self.support[self.grid_x * y + x]
     }
 
-    fn set_support(&mut self, (x, y): (usize, usize), side: Side, idx: usize, val: usize) {
-        let side_idx: usize = side.into();
-        self.support[self.grid_x * y + x][side_idx][idx] = val;
+    fn set_support(&mut self, (x, y): (usize, usize), idx: usize, val: bool) {
+        self.support[self.grid_x * y + x][idx] = val;
     }
 
     fn set(&mut self, (x, y): (usize, usize), cell: Tile<'a>) {
         self.grid[self.grid_x * y + x] = Some(cell);
     }
 
+    /// returns a vector of (position, side), where the side is from the reference
+    /// of the origin position.
+    /// ((x-1,y), Left)  <- position -> ((x+1,y), Right)
     fn neighbours(&self, (x, y): (usize, usize)) -> Vec<((usize, usize), Side)> {
         let mut result = Vec::new();
         if x > 0 {
@@ -243,72 +231,8 @@ pub fn test_sdl() {
     let max_y: usize = 8;
 
     let mut rng = rand::thread_rng();
-    let mut q = VecDeque::new();
-    let mut grid;
-
-    'gen: loop {
-        q.clear();
-        q.push_back((0, 0));
-        grid = Grid::new(max_x, max_y, &tiles, &links);
-
-        while let Some(coord) = q.pop_front() {
-            let cell = grid.get(coord);
-            match cell {
-                Some(_) => (),
-                None => {
-                    let support = grid.get_support(coord);
-                    let possible_tile_indexes: Vec<usize> = support
-                        .into_iter()
-                        .flat_map(|side_support| {
-                            side_support
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, c)| **c > 0)
-                                .map(|(idx, _)| idx)
-                        })
-                        .collect();
-
-                    if possible_tile_indexes.is_empty() {
-                        println!("reset grid");
-                        continue 'gen;
-                    }
-
-                    let t_idx: usize = rng.gen::<usize>() % possible_tile_indexes.len();
-                    let tile = tiles[possible_tile_indexes[t_idx]];
-                    grid.set(coord, tile.clone());
-
-                    for (next_coord, side) in grid.neighbours(coord) {
-                        for (i, t) in tiles.iter().enumerate() {
-                            let link = (&tile, side, t);
-                            if !links.contains(&link) {
-                                grid.set_support(next_coord, side, i, 0);
-                            }
-                        }
-                        q.push_back(next_coord);
-                    }
-                }
-            }
-        }
-        break;
-    }
-
-    for x in 0..max_x {
-        for y in 0..max_y {
-            match grid.get((x, y)) {
-                Some(tile) => {
-                    let dest = Rect::new(
-                        x as i32 * tile.width as i32,
-                        y as i32 * tile.height as i32,
-                        tile.width,
-                        tile.height,
-                    );
-                    let orig = Rect::new(tile.offset_x, tile.offset_y, tile.width, tile.height);
-                    canvas.copy(tile.texture, orig, dest).unwrap();
-                }
-                _ => {}
-            }
-        }
-    }
+    let mut grid = gen_grid(&mut rng, (max_x, max_y), &tiles, &links);
+    render_grid(&mut canvas, &grid);
 
     'running: loop {
         canvas.present();
@@ -320,6 +244,13 @@ pub fn test_sdl() {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Space),
+                    ..
+                } => {
+                    grid = gen_grid(&mut rng, (max_x, max_y), &tiles, &links);
+                    render_grid(&mut canvas, &grid);
+                }
                 _ => {}
             }
         }
@@ -378,5 +309,83 @@ fn opposite_side(side: Side) -> Side {
         Side::Right => Side::Left,
         Side::Down => Side::Up,
         Side::Left => Side::Right,
+    }
+}
+
+fn gen_grid<'a>(
+    rng: &mut rand::rngs::ThreadRng,
+    bounds: (usize, usize),
+    tiles: &'a Vec<Tile<'a>>,
+    links: &'a Vec<Link<'a>>,
+) -> Grid<'a> {
+    let (max_x, max_y) = bounds;
+    let mut q = VecDeque::new();
+    let mut grid;
+
+    'gen: loop {
+        q.clear();
+        q.push_back((0, 0));
+        grid = Grid::new(max_x, max_y, tiles);
+
+        while let Some(coord) = q.pop_front() {
+            let cell = grid.get(coord);
+            match cell {
+                Some(_) => (),
+                None => {
+                    let possible_tile_indexes = grid
+                        .get_support(coord)
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, is_possible)| **is_possible)
+                        .map(|(idx, _)| idx)
+                        .collect::<Vec<_>>();
+
+                    if possible_tile_indexes.is_empty() {
+                        println!("reset grid");
+                        continue 'gen;
+                    }
+
+                    let t_idx: usize = rng.gen::<usize>() % possible_tile_indexes.len();
+                    let tile = tiles[possible_tile_indexes[t_idx]];
+                    grid.set(coord, tile.clone());
+
+                    for (next_coord, side) in grid.neighbours(coord) {
+                        for (i, t) in tiles.iter().enumerate() {
+                            let link = (&tile, side, t);
+                            if !links.contains(&link) {
+                                grid.set_support(next_coord, i, false);
+                            }
+                        }
+                        q.push_back(next_coord);
+                    }
+                }
+            }
+        }
+        break;
+    }
+
+    grid
+}
+
+fn render_grid<'a, T: sdl2::render::RenderTarget>(
+    canvas: &mut sdl2::render::Canvas<T>,
+    grid: &'a Grid<'a>,
+) {
+    for x in 0..grid.grid_x {
+        for y in 0..grid.grid_y {
+            match grid.get((x, y)) {
+                Some(tile) => {
+                    let dest = Rect::new(
+                        x as i32 * tile.width as i32,
+                        y as i32 * tile.height as i32,
+                        tile.width,
+                        tile.height,
+                    );
+                    let orig = Rect::new(tile.offset_x, tile.offset_y, tile.width, tile.height);
+                    canvas.copy(tile.texture, orig, dest).unwrap();
+                }
+                _ => {}
+            }
+        }
     }
 }
