@@ -1,6 +1,7 @@
 extern crate sdl2;
 
-use rand::Rng;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 use sdl2::event::Event;
 use sdl2::image;
 use sdl2::keyboard::Keycode;
@@ -76,13 +77,6 @@ impl<'texture> Hash for Tile<'texture> {
 
 type Link<'a> = (&'a Tile<'a>, Side, &'a Tile<'a>);
 
-// #[derive(Debug)]
-// enum Cell<'a> {
-//     Fixed(Tile<'a>),
-//     Pending(&'a Vec<Tile<'a>>),
-//     Impossible,
-// }
-
 type TileSupport = Vec<Vec<bool>>;
 
 struct Grid<'a> {
@@ -150,20 +144,32 @@ impl<'a> Grid<'a> {
 }
 
 pub fn test_sdl() {
+    let gl_driver = find_sdl_gl_driver().expect("No GL driver found");
+
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
+    let win_x = 800;
+    let win_y = 600;
     let window = video_subsystem
-        .window("rust-sdl2 demo", 800, 600)
+        .window("rust-sdl2 demo", win_x, win_y)
+        .opengl()
         .position_centered()
-        // .resizable()
+        .resizable()
         .build()
         .unwrap();
 
     let _img_subsystem = image::init(image::InitFlag::all()).unwrap();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut canvas = window.into_canvas().build().unwrap();
+    let mut canvas = window
+        .into_canvas()
+        .index(gl_driver)
+        .present_vsync()
+        .accelerated()
+        .build()
+        .unwrap();
+    canvas.set_viewport(Rect::new(0, 0, win_x, win_y));
 
     let surf_tileset: sdl2::surface::Surface =
         image::LoadSurface::from_file("./resources/tileset2.png").unwrap();
@@ -227,10 +233,13 @@ pub fn test_sdl() {
         (&tiles[3], Side::Left, &tiles[3]),
     ]);
 
-    let max_x: usize = 12;
-    let max_y: usize = 8;
+    let tile_size_x = tiles[0].width;
+    let tile_size_y = tiles[0].height;
+    let (max_x, max_y) = get_grid_size(canvas.window(), tile_size_x, tile_size_y);
 
-    let mut rng = rand::thread_rng();
+    let mut base_rng = rand::thread_rng();
+    let mut u64_seed = base_rng.gen();
+    let mut rng: SmallRng = rand::SeedableRng::seed_from_u64(u64_seed);
     let mut grid = gen_grid(&mut rng, (max_x, max_y), &tiles, &links);
     render_grid(&mut canvas, &grid);
 
@@ -248,48 +257,30 @@ pub fn test_sdl() {
                     keycode: Some(Keycode::Space),
                     ..
                 } => {
+                    u64_seed = rng.gen();
+                    let (max_x, max_y) = get_grid_size(canvas.window(), tile_size_x, tile_size_y);
                     grid = gen_grid(&mut rng, (max_x, max_y), &tiles, &links);
                     render_grid(&mut canvas, &grid);
                 }
+                Event::Window {
+                    win_event: win_ev, ..
+                } => match win_ev {
+                    sdl2::event::WindowEvent::Resized(_, _) => {
+                        let (max_x, max_y) =
+                            get_grid_size(canvas.window(), tile_size_x, tile_size_y);
+                        rng = rand::SeedableRng::seed_from_u64(u64_seed);
+                        grid = gen_grid(&mut rng, (max_x, max_y), &tiles, &links);
+                        render_grid(&mut canvas, &grid);
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
 
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
-
-    // let mut canvas = window.into_canvas().build().unwrap();
-    //
-    // canvas.set_draw_color(Color::RGB(0, 255, 255));
-    // canvas.clear();
-    // canvas.present();
-    // let mut event_pump = sdl_context.event_pump().unwrap();
-    // let mut i = 0;
-    // let start_time = std::time::Instant::now();
-    // 'running: loop {
-    //     i = (i + 1) % 255;
-    //     canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
-    //     canvas.clear();
-    //     for event in event_pump.poll_iter() {
-    //         match event {
-    //             Event::Quit { .. }
-    //             | Event::KeyDown {
-    //                 keycode: Some(Keycode::Escape),
-    //                 ..
-    //             } => break 'running,
-    //             _ => {}
-    //         }
-    //     }
-    //     // The rest of the game loop goes here...
-    //
-    //     if start_time.elapsed().as_secs() >= 1 {
-    //         break 'running;
-    //     }
-    //
-    //     canvas.present();
-    //     std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
-    // }
-    println!("exiting");
+    // println!("exiting");
 }
 
 /// Given a list of link, return a list augmented with all the reverse
@@ -312,8 +303,16 @@ fn opposite_side(side: Side) -> Side {
     }
 }
 
-fn gen_grid<'a>(
-    rng: &mut rand::rngs::ThreadRng,
+/// returns the number of tiles to produce to cover the given window
+fn get_grid_size(win: &sdl2::video::Window, tile_size_x: u32, tile_size_y: u32) -> (usize, usize) {
+    let (win_x, win_y) = win.size();
+    let max_x: usize = (win_x / tile_size_x) as usize + 1;
+    let max_y: usize = (win_y / tile_size_y) as usize + 1;
+    (max_x, max_y)
+}
+
+fn gen_grid<'a, T: rand::Rng>(
+    rng: &mut T,
     bounds: (usize, usize),
     tiles: &'a Vec<Tile<'a>>,
     links: &'a Vec<Link<'a>>,
@@ -321,6 +320,7 @@ fn gen_grid<'a>(
     let (max_x, max_y) = bounds;
     let mut q = VecDeque::new();
     let mut grid;
+    let start = std::time::Instant::now();
 
     'gen: loop {
         q.clear();
@@ -364,6 +364,7 @@ fn gen_grid<'a>(
         break;
     }
 
+    // println!("gen took {:?} μs", start.elapsed().as_micros());
     grid
 }
 
@@ -371,6 +372,8 @@ fn render_grid<'a, T: sdl2::render::RenderTarget>(
     canvas: &mut sdl2::render::Canvas<T>,
     grid: &'a Grid<'a>,
 ) {
+    let start = std::time::Instant::now();
+    canvas.clear();
     for x in 0..grid.grid_x {
         for y in 0..grid.grid_y {
             match grid.get((x, y)) {
@@ -388,4 +391,19 @@ fn render_grid<'a, T: sdl2::render::RenderTarget>(
             }
         }
     }
+    // println!("render took {:?} μs", start.elapsed().as_micros());
+}
+
+fn find_sdl_gl_driver() -> Option<u32> {
+    let mut i = sdl2::render::drivers()
+        .enumerate()
+        .filter_map(|(idx, item)| {
+            if item.name == "opengl" {
+                Some(idx as u32)
+            } else {
+                None
+            }
+        });
+
+    i.next()
 }
